@@ -1,33 +1,53 @@
 import { useEffect, useRef, useState } from "react";
 import { Html5Qrcode } from "html5-qrcode";
+import {
+  Navbar,
+  NavbarBrand,
+  NavbarContent,
+  Input,
+  Button,
+  Card,
+  CardBody,
+  Chip,
+} from "@heroui/react";
 import "./App.css";
 
-const initialProducts = [
-  { id: 1, name: "Arroz", stock: 20, qr: "QR-ARROZ-001" },
+type Product = {
+  id: number;
+  name: string;
+  stock: number;
+  precio: number;
+  qr: string;
+};
+
+const initialProducts: Product[] = [
+  { id: 1, name: "Arroz", stock: 20, precio: 1.5, qr: "QR-ARROZ-001" },
 ];
 
 export default function App() {
   const [products, setProducts] = useState(initialProducts);
   const [search, setSearch] = useState("");
-  const [view, setView] = useState("list"); // list | add | edit | scan
-  const [current, setCurrent] = useState(null);
+  const [view, setView] = useState<"list" | "add" | "edit" | "scan">("list");
+  const [current, setCurrent] = useState<Product | null>(null);
 
-  const addProduct = (name, stock, qr) => {
-    setProducts([
-      ...products,
-      { id: Date.now(), name, stock: Number(stock), qr },
-    ]);
+  const addProduct = (
+    name: string,
+    stock: number,
+    precio: number,
+    qr: string,
+  ) => {
+    setProducts([...products, { id: Date.now(), name, stock, precio, qr }]);
     setView("list");
   };
 
-  const saveEdit = (id, stock) => {
+  const saveEdit = (id: number, stock: number, precio: number) => {
     setProducts(
-      products.map((p) => (p.id === id ? { ...p, stock: Number(stock) } : p))
+      products.map((p) => (p.id === id ? { ...p, stock, precio } : p)),
     );
     setView("list");
   };
 
-  const findByQR = (qr) => {
+  const findByQR = (qr: string) => {
     const product = products.find((p) => p.qr === qr);
     if (!product) return alert("Producto no encontrado");
     setCurrent(product);
@@ -35,80 +55,125 @@ export default function App() {
   };
 
   const filtered = products.filter((p) =>
-    p.name.toLowerCase().includes(search.toLowerCase())
+    p.name.toLowerCase().includes(search.toLowerCase()),
   );
 
   return (
-    <div className="min-h-screen bg-gray-100 p-4 max-w-md mx-auto">
-      <h1 className="text-xl font-bold mb-4 text-center">Inventario Bodega</h1>
+    <div className="min-h-screen bg-gray-50">
+      <Navbar isBordered maxWidth="sm">
+        <NavbarBrand>
+          <p className="font-bold text-inherit">Inventario Bodega</p>
+        </NavbarBrand>
+        <NavbarContent justify="end">
+          <Chip size="sm" variant="flat" color="primary">
+            {products.length} productos
+          </Chip>
+        </NavbarContent>
+      </Navbar>
 
-      {view === "list" && (
-        <>
-          <input
-            className="w-full border p-2 rounded mb-3"
-            placeholder="Buscar producto"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+      <div className="max-w-md mx-auto p-4">
+        {view === "list" && (
+          <>
+            <Input
+              className="mb-4"
+              placeholder="Buscar producto..."
+              value={search}
+              onValueChange={setSearch}
+              isClearable
+              onClear={() => setSearch("")}
+              startContent={<span className="text-gray-400 text-sm">🔍</span>}
+            />
 
-          <div className="space-y-3 mb-4">
-            {filtered.map((p) => (
-              <div
-                key={p.id}
-                className="bg-white p-3 rounded-xl shadow flex justify-between items-center"
-              >
-                <div>
-                  <p className="font-semibold">{p.name}</p>
-                  <p className="text-sm text-gray-600">Stock: {p.stock}</p>
-                </div>
-                <button
-                  onClick={() => {
+            <div className="space-y-3 mb-4">
+              {filtered.map((p) => (
+                <Card
+                  className="w-full"
+                  key={p.id}
+                  isPressable
+                  onPress={() => {
                     setCurrent(p);
                     setView("edit");
                   }}
-                  className="bg-blue-500 text-white px-3 py-1 rounded"
                 >
-                  Editar
-                </button>
-              </div>
-            ))}
-          </div>
+                  <CardBody className="flex-row justify-between items-center">
+                    <div>
+                      <p className="font-semibold">{p.name}</p>
+                      <div className="flex gap-2 mt-1">
+                        <Chip size="sm" variant="flat" color="success">
+                          Stock: {p.stock}
+                        </Chip>
+                        <Chip size="sm" variant="flat" color="warning">
+                          ${p.precio.toFixed(2)}
+                        </Chip>
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      color="primary"
+                      variant="flat"
+                      onPress={() => {
+                        setCurrent(p);
+                        setView("edit");
+                      }}
+                    >
+                      Editar
+                    </Button>
+                  </CardBody>
+                </Card>
+              ))}
+              {filtered.length === 0 && (
+                <p className="text-center text-gray-400 py-8">
+                  No se encontraron productos
+                </p>
+              )}
+            </div>
 
-          <button
-            onClick={() => setView("add")}
-            className="w-full bg-green-600 text-white py-2 rounded mb-2"
-          >
-            + Registrar producto (QR)
-          </button>
+            <div className="flex flex-col gap-2">
+              <Button
+                color="success"
+                className="w-full"
+                onPress={() => setView("add")}
+              >
+                + Registrar producto
+              </Button>
+              <Button
+                color="default"
+                variant="bordered"
+                className="w-full"
+                onPress={() => setView("scan")}
+              >
+                📷 Escanear QR para editar
+              </Button>
+            </div>
+          </>
+        )}
 
-          <button
-            onClick={() => setView("scan")}
-            className="w-full bg-black text-white py-2 rounded"
-          >
-            📷 Escanear QR para editar
-          </button>
-        </>
-      )}
-
-      {view === "scan" && (
-        <ScanQR onResult={findByQR} onBack={() => setView("list")} />
-      )}
-      {view === "add" && (
-        <AddView onSave={addProduct} onBack={() => setView("list")} />
-      )}
-      {view === "edit" && current && (
-        <EditView
-          product={current}
-          onSave={saveEdit}
-          onBack={() => setView("list")}
-        />
-      )}
+        {view === "scan" && (
+          <ScanQR onResult={findByQR} onBack={() => setView("list")} />
+        )}
+        {view === "add" && (
+          <AddView onSave={addProduct} onBack={() => setView("list")} />
+        )}
+        {view === "edit" && current && (
+          <EditView
+            product={current}
+            onSave={saveEdit}
+            onBack={() => setView("list")}
+          />
+        )}
+      </div>
     </div>
   );
 }
 
-function ScanQR({ onResult, onBack }) {
-  const scannerRef = useRef(null);
+function ScanQR({
+  onResult,
+  onBack,
+}: {
+  onResult: (qr: string) => void;
+  onBack: () => void;
+}) {
+  const scannerRef = useRef<Html5Qrcode | null>(null);
   const [active, setActive] = useState(false);
 
   const startScan = async () => {
@@ -122,7 +187,8 @@ function ScanQR({ onResult, onBack }) {
         (decodedText) => {
           stopScan();
           onResult(decodedText);
-        }
+        },
+        undefined,
       );
 
       setActive(true);
@@ -137,7 +203,9 @@ function ScanQR({ onResult, onBack }) {
       try {
         await scannerRef.current.stop();
         await scannerRef.current.clear();
-      } catch (e) {}
+      } catch (_e) {
+        /* ignore */
+      }
       scannerRef.current = null;
     }
     setActive(false);
@@ -150,96 +218,143 @@ function ScanQR({ onResult, onBack }) {
   }, []);
 
   return (
-    <div className="bg-white p-4 rounded-xl shadow">
-      <h2 className="font-bold mb-3">Escanear QR</h2>
+    <Card>
+      <CardBody>
+        <h2 className="font-bold text-lg mb-3">Escanear QR</h2>
 
-      {!active && (
-        <button
-          onClick={startScan}
-          className="w-full bg-black text-white py-2 rounded mb-3"
+        {!active && (
+          <Button color="default" className="w-full mb-3" onPress={startScan}>
+            Activar cámara
+          </Button>
+        )}
+
+        <div id="qr-reader" className="w-full" />
+
+        <Button
+          variant="light"
+          className="w-full mt-3"
+          onPress={() => {
+            stopScan();
+            onBack();
+          }}
         >
-          Activar cámara
-        </button>
-      )}
-
-      <div id="qr-reader" className="w-full" />
-
-      <button
-        onClick={() => {
-          stopScan();
-          onBack();
-        }}
-        className="w-full mt-3 text-gray-600"
-      >
-        Volver
-      </button>
-    </div>
+          Volver
+        </Button>
+      </CardBody>
+    </Card>
   );
 }
 
-function AddView({ onSave, onBack }) {
+function AddView({
+  onSave,
+  onBack,
+}: {
+  onSave: (name: string, stock: number, precio: number, qr: string) => void;
+  onBack: () => void;
+}) {
   const [name, setName] = useState("");
   const [stock, setStock] = useState("");
-  const [qr, setQr] = useState(null);
+  const [precio, setPrecio] = useState("");
+  const [qr, setQr] = useState<string | null>(null);
 
   return (
-    <div className="bg-white p-4 rounded-xl shadow">
-      <h2 className="font-bold mb-3">Registrar producto</h2>
+    <Card>
+      <CardBody>
+        <h2 className="font-bold text-lg mb-3">Registrar producto</h2>
 
-      {!qr && <ScanQR onResult={setQr} onBack={onBack} />}
+        {!qr && <ScanQR onResult={setQr} onBack={onBack} />}
 
-      {qr && (
-        <>
-          <p className="text-xs text-gray-500 mb-2">QR detectado: {qr}</p>
-          <input
-            className="w-full border p-2 rounded mb-2"
-            placeholder="Nombre"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-          <input
-            className="w-full border p-2 rounded mb-3"
-            placeholder="Stock"
-            type="number"
-            value={stock}
-            onChange={(e) => setStock(e.target.value)}
-          />
-          <button
-            onClick={() => onSave(name, stock, qr)}
-            className="w-full bg-blue-600 text-white py-2 rounded mb-2"
-          >
-            Guardar producto
-          </button>
-          <button onClick={() => setQr(null)} className="w-full text-gray-600">
-            Reescanear QR
-          </button>
-        </>
-      )}
-    </div>
+        {qr && (
+          <div className="flex flex-col gap-3">
+            <Chip size="sm" variant="flat" color="secondary">
+              QR: {qr}
+            </Chip>
+            <Input
+              label="Nombre"
+              placeholder="Nombre del producto"
+              value={name}
+              onValueChange={setName}
+            />
+            <Input
+              label="Stock"
+              placeholder="Cantidad"
+              type="number"
+              value={stock}
+              onValueChange={setStock}
+            />
+            <Input
+              label="Precio"
+              placeholder="0.00"
+              type="number"
+              step="0.01"
+              value={precio}
+              onValueChange={setPrecio}
+              startContent={<span className="text-gray-400 text-sm">$</span>}
+            />
+            <Button
+              color="primary"
+              className="w-full"
+              onPress={() => onSave(name, Number(stock), Number(precio), qr)}
+            >
+              Guardar producto
+            </Button>
+            <Button
+              variant="light"
+              className="w-full"
+              onPress={() => setQr(null)}
+            >
+              Reescanear QR
+            </Button>
+          </div>
+        )}
+      </CardBody>
+    </Card>
   );
 }
 
-function EditView({ product, onSave, onBack }) {
-  const [stock, setStock] = useState(product.stock);
+function EditView({
+  product,
+  onSave,
+  onBack,
+}: {
+  product: Product;
+  onSave: (id: number, stock: number, precio: number) => void;
+  onBack: () => void;
+}) {
+  const [stock, setStock] = useState(String(product.stock));
+  const [precio, setPrecio] = useState(String(product.precio));
 
   return (
-    <div className="bg-white p-4 rounded-xl shadow">
-      <h2 className="font-bold mb-3">Editar {product.name}</h2>
-      <input
-        className="w-full border p-2 rounded mb-3"
-        type="number"
-        value={stock}
-        onChange={(e) => setStock(e.target.value)}
-      />
-      <button
-        onClick={() => onSave(product.id, stock)}
-        className="w-full bg-green-600 text-white py-2 rounded mb-2"
-      >
-        Guardar cambios
-      </button>
-      <button onClick={onBack} className="w-full text-gray-600">
-        Volver
-      </button>
-    </div>
+    <Card>
+      <CardBody>
+        <h2 className="font-bold text-lg mb-3">Editar {product.name}</h2>
+        <div className="flex flex-col gap-3">
+          <Input
+            label="Stock"
+            type="number"
+            value={stock}
+            onValueChange={setStock}
+          />
+          <Input
+            label="Precio"
+            type="number"
+            step="0.01"
+            value={precio}
+            onValueChange={setPrecio}
+            startContent={<span className="text-gray-400 text-sm">$</span>}
+          />
+          <Button
+            color="success"
+            className="w-full"
+            onPress={() => onSave(product.id, Number(stock), Number(precio))}
+          >
+            Guardar cambios
+          </Button>
+          <Button variant="light" className="w-full" onPress={onBack}>
+            Volver
+          </Button>
+        </div>
+      </CardBody>
+    </Card>
   );
 }
