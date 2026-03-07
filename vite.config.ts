@@ -7,6 +7,6 @@ export default defineConfig({
   plugins: [tailwindcss(), react(), basicSsl()],
   server: {
     host: true,
-    https: true,
+    https: {} as any,
   },
 });

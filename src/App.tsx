@@ -136,8 +136,7 @@ export default function App() {
                         size="sm"
                         color="danger"
                         variant="flat"
-                        onPress={(e) => {
-                          e.stopPropagation?.();
+                        onPress={() => {
                           if (confirm(`Eliminar "${p.name}"?`)) {
                             deleteProduct(p);
                           }
