@@ -31,7 +31,9 @@ export default function App() {
   const [pin, setPin] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
   const [search, setSearch] = useState("");
-  const [view, setView] = useState<"list" | "add" | "edit" | "sell" | "scan">("list");
+  const [view, setView] = useState<"list" | "add" | "edit" | "sell" | "scan">(
+    "list",
+  );
   const [current, setCurrent] = useState<Product | null>(null);
 
   const fetchProducts = async () => {
@@ -60,7 +62,10 @@ export default function App() {
     setView("list");
   };
 
-  const saveEdit = async (id: number, updates: Partial<Omit<Product, "id">>) => {
+  const saveEdit = async (
+    id: number,
+    updates: Partial<Omit<Product, "id">>,
+  ) => {
     await supabase.from("products").update(updates).eq("id", id);
     await fetchProducts();
   };
@@ -195,7 +200,7 @@ export default function App() {
                           Stock: {p.stock}
                         </Chip>
                         <Chip size="sm" variant="flat" color="warning">
-                          ${p.precio.toFixed(2)}
+                          Precio: S/{p.precio.toFixed(2)}
                         </Chip>
                       </div>
                     </div>
@@ -248,7 +253,7 @@ export default function App() {
                 className="w-full"
                 onPress={() => setView("scan")}
               >
-                📷 Escanear QR para vender
+                📷 Escanear QR
               </Button>
             </div>
           </>
@@ -402,7 +407,7 @@ function AddView({
               step="0.01"
               value={precio}
               onValueChange={setPrecio}
-              startContent={<span className="text-gray-400 text-sm">$</span>}
+              startContent={<span className="text-gray-400 text-sm">S/</span>}
             />
             <Button
               color="primary"
@@ -436,6 +441,7 @@ function SellView({
 }) {
   const [cantidad, setCantidad] = useState("");
   const stock = product.stock;
+  const price = product.precio;
 
   const qty = Number(cantidad) || 0;
 
@@ -458,9 +464,14 @@ function SellView({
       <CardBody>
         <h2 className="font-bold text-lg mb-3">Vender {product.name}</h2>
         <div className="flex flex-col gap-4">
-          <Chip size="lg" variant="flat" color="primary">
-            Stock actual: {stock}
-          </Chip>
+          <div className="w-full flex flex-wrap gap-2">
+            <Chip size="lg" variant="flat" color="primary">
+              Stock: {stock}
+            </Chip>
+            <Chip size="lg" variant="flat" color="secondary">
+              Precio: S/{price.toFixed(2)}
+            </Chip>
+          </div>
           <Input
             label="Cantidad"
             placeholder="Ej: 5"
@@ -514,11 +525,7 @@ function EditView({
       <CardBody>
         <h2 className="font-bold text-lg mb-3">Editar {product.name}</h2>
         <div className="flex flex-col gap-4">
-          <Input
-            label="Nombre"
-            value={name}
-            onValueChange={setName}
-          />
+          <Input label="Nombre" value={name} onValueChange={setName} />
           <Input
             label="Stock"
             type="number"
@@ -533,7 +540,7 @@ function EditView({
             step="0.01"
             value={precio}
             onValueChange={setPrecio}
-            startContent={<span className="text-gray-400 text-sm">$</span>}
+            startContent={<span className="text-gray-400 text-sm">S/</span>}
           />
           <Button
             color="primary"
