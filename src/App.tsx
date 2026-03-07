@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { Html5Qrcode } from "html5-qrcode";
 import {
   Navbar,
@@ -10,7 +10,10 @@ import {
   CardBody,
   Chip,
 } from "@heroui/react";
+import { toast } from "sonner";
 import "./App.css";
+
+const API = "http://192.168.18.196:3001";
 
 type Product = {
   id: number;
@@ -20,36 +23,50 @@ type Product = {
   qr: string;
 };
 
-const initialProducts: Product[] = [
-  { id: 1, name: "Arroz", stock: 20, precio: 1.5, qr: "QR-ARROZ-001" },
-];
-
 export default function App() {
-  const [products, setProducts] = useState(initialProducts);
+  const [products, setProducts] = useState<Product[]>([]);
   const [search, setSearch] = useState("");
   const [view, setView] = useState<"list" | "add" | "edit" | "scan">("list");
   const [current, setCurrent] = useState<Product | null>(null);
 
-  const addProduct = (
+  const fetchProducts = useCallback(async () => {
+    const res = await fetch(`${API}/products`);
+    const data = await res.json();
+    setProducts(data);
+  }, []);
+
+  useEffect(() => {
+    fetchProducts();
+  }, [fetchProducts]);
+
+  const addProduct = async (
     name: string,
     stock: number,
     precio: number,
     qr: string,
   ) => {
-    setProducts([...products, { id: Date.now(), name, stock, precio, qr }]);
+    await fetch(`${API}/products`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, stock, precio, qr }),
+    });
+    await fetchProducts();
+    toast.success(`"${name}" agregado correctamente`);
     setView("list");
   };
 
-  const saveEdit = (id: number, stock: number, precio: number) => {
-    setProducts(
-      products.map((p) => (p.id === id ? { ...p, stock, precio } : p)),
-    );
-    setView("list");
+  const saveEdit = async (id: number, stock: number, precio: number) => {
+    await fetch(`${API}/products/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stock, precio }),
+    });
+    await fetchProducts();
   };
 
   const findByQR = (qr: string) => {
     const product = products.find((p) => p.qr === qr);
-    if (!product) return alert("Producto no encontrado");
+    if (!product) return toast.error("Producto no encontrado");
     setCurrent(product);
     setView("edit");
   };
@@ -321,34 +338,80 @@ function EditView({
   onSave: (id: number, stock: number, precio: number) => void;
   onBack: () => void;
 }) {
-  const [stock, setStock] = useState(String(product.stock));
+  const [cantidad, setCantidad] = useState("");
+  const [stock, setStock] = useState(product.stock);
   const [precio, setPrecio] = useState(String(product.precio));
+
+  const qty = Number(cantidad) || 0;
+
+  const handleAgregar = () => {
+    const newStock = stock + qty;
+    setStock(newStock);
+    setCantidad("");
+    onSave(product.id, newStock, Number(precio));
+    toast.success(`Agregaste ${qty} ${product.name}`);
+  };
+
+  const handleDescontar = () => {
+    const newStock = stock - qty;
+    setStock(newStock);
+    setCantidad("");
+    onSave(product.id, newStock, Number(precio));
+    toast.success(`Retiraste ${qty} ${product.name}`);
+  };
 
   return (
     <Card>
       <CardBody>
         <h2 className="font-bold text-lg mb-3">Editar {product.name}</h2>
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-4">
+          <Chip size="lg" variant="flat" color="primary">
+            Stock actual: {stock}
+          </Chip>
           <Input
-            label="Stock"
+            label="Cantidad"
+            placeholder="Ej: 5"
             type="number"
-            value={stock}
-            onValueChange={setStock}
+            inputMode="numeric"
+            value={cantidad}
+            onValueChange={setCantidad}
           />
+          <div className="flex gap-2">
+            <Button
+              color="success"
+              className="flex-1"
+              isDisabled={qty <= 0}
+              onPress={handleAgregar}
+            >
+              + Agregar {qty > 0 && qty}
+            </Button>
+            <Button
+              color="danger"
+              className="flex-1"
+              isDisabled={qty <= 0 || qty > stock}
+              onPress={handleDescontar}
+            >
+              - Descontar {qty > 0 && qty}
+            </Button>
+          </div>
           <Input
             label="Precio"
             type="number"
+            inputMode="decimal"
             step="0.01"
             value={precio}
             onValueChange={setPrecio}
             startContent={<span className="text-gray-400 text-sm">$</span>}
           />
           <Button
-            color="success"
+            color="primary"
             className="w-full"
-            onPress={() => onSave(product.id, Number(stock), Number(precio))}
+            onPress={() => {
+              onSave(product.id, stock, Number(precio));
+              toast.success(`Precio de ${product.name} actualizado`);
+            }}
           >
-            Guardar cambios
+            Guardar precio
           </Button>
           <Button variant="light" className="w-full" onPress={onBack}>
             Volver

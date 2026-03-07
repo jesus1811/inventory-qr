@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "api": "json-server db.json --port 3001 --host 0.0.0.0",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
@@ -14,8 +15,10 @@
     "@tailwindcss/vite": "^4.1.18",
     "framer-motion": "^12.34.0",
     "html5-qrcode": "^2.3.8",
+    "json-server": "^1.0.0-beta.6",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "sonner": "^2.0.7",
     "tailwindcss": "^4.1.18"
   },
   "devDependencies": {
