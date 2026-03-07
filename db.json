@@ -1,18 +1,11 @@
 {
   "products": [
     {
-      "id": "1",
-      "name": "Arroz",
-      "stock": 19,
-      "precio": 1.5,
-      "qr": "QR-ARROZ-001"
-    },
-    {
-      "id": "109b",
-      "name": "Motokawa",
-      "stock": 1,
-      "precio": 150,
-      "qr": "4891761196639"
+      "id": "7ff0",
+      "name": "Sporade",
+      "stock": 0,
+      "precio": 5,
+      "qr": "7750182009027"
     }
   ]
 }

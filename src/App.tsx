@@ -11,9 +11,8 @@ import {
   Chip,
 } from "@heroui/react";
 import { toast } from "sonner";
+import { supabase } from "./supabase";
 import "./App.css";
-
-const API = "http://192.168.18.196:3001";
 
 type Product = {
   id: number;
@@ -30,9 +29,8 @@ export default function App() {
   const [current, setCurrent] = useState<Product | null>(null);
 
   const fetchProducts = useCallback(async () => {
-    const res = await fetch(`${API}/products`);
-    const data = await res.json();
-    setProducts(data);
+    const { data } = await supabase.from("products").select("*");
+    setProducts(data ?? []);
   }, []);
 
   useEffect(() => {
@@ -45,23 +43,21 @@ export default function App() {
     precio: number,
     qr: string,
   ) => {
-    await fetch(`${API}/products`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, stock, precio, qr }),
-    });
+    await supabase.from("products").insert({ name, stock, precio, qr });
     await fetchProducts();
     toast.success(`"${name}" agregado correctamente`);
     setView("list");
   };
 
   const saveEdit = async (id: number, stock: number, precio: number) => {
-    await fetch(`${API}/products/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ stock, precio }),
-    });
+    await supabase.from("products").update({ stock, precio }).eq("id", id);
     await fetchProducts();
+  };
+
+  const deleteProduct = async (product: Product) => {
+    await supabase.from("products").delete().eq("id", product.id);
+    await fetchProducts();
+    toast.success(`"${product.name}" eliminado`);
   };
 
   const findByQR = (qr: string) => {
@@ -124,17 +120,32 @@ export default function App() {
                         </Chip>
                       </div>
                     </div>
-                    <Button
-                      size="sm"
-                      color="primary"
-                      variant="flat"
-                      onPress={() => {
-                        setCurrent(p);
-                        setView("edit");
-                      }}
-                    >
-                      Editar
-                    </Button>
+                    <div className="flex gap-1">
+                      <Button
+                        size="sm"
+                        color="primary"
+                        variant="flat"
+                        onPress={() => {
+                          setCurrent(p);
+                          setView("edit");
+                        }}
+                      >
+                        Editar
+                      </Button>
+                      <Button
+                        size="sm"
+                        color="danger"
+                        variant="flat"
+                        onPress={(e) => {
+                          e.stopPropagation?.();
+                          if (confirm(`Eliminar "${p.name}"?`)) {
+                            deleteProduct(p);
+                          }
+                        }}
+                      >
+                        Eliminar
+                      </Button>
+                    </div>
                   </CardBody>
                 </Card>
               ))}
