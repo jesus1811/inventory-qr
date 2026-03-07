@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Html5Qrcode } from "html5-qrcode";
 import {
   Navbar,
@@ -22,20 +22,31 @@ type Product = {
   qr: string;
 };
 
+const APP_PIN = import.meta.env.VITE_APP_PIN || "7654";
+
 export default function App() {
+  const [authenticated, setAuthenticated] = useState(
+    () => sessionStorage.getItem("auth") === "true",
+  );
+  const [pin, setPin] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
   const [search, setSearch] = useState("");
-  const [view, setView] = useState<"list" | "add" | "edit" | "scan">("list");
+  const [view, setView] = useState<"list" | "add" | "edit" | "sell" | "scan">("list");
   const [current, setCurrent] = useState<Product | null>(null);
 
-  const fetchProducts = useCallback(async () => {
+  const fetchProducts = async () => {
     const { data } = await supabase.from("products").select("*");
     setProducts(data ?? []);
-  }, []);
+  };
 
   useEffect(() => {
-    fetchProducts();
-  }, [fetchProducts]);
+    if (authenticated) {
+      supabase
+        .from("products")
+        .select("*")
+        .then(({ data }) => setProducts(data ?? []));
+    }
+  }, [authenticated]);
 
   const addProduct = async (
     name: string,
@@ -49,8 +60,8 @@ export default function App() {
     setView("list");
   };
 
-  const saveEdit = async (id: number, stock: number, precio: number) => {
-    await supabase.from("products").update({ stock, precio }).eq("id", id);
+  const saveEdit = async (id: number, updates: Partial<Omit<Product, "id">>) => {
+    await supabase.from("products").update(updates).eq("id", id);
     await fetchProducts();
   };
 
@@ -64,12 +75,80 @@ export default function App() {
     const product = products.find((p) => p.qr === qr);
     if (!product) return toast.error("Producto no encontrado");
     setCurrent(product);
-    setView("edit");
+    setView("sell");
   };
 
   const filtered = products.filter((p) =>
     p.name.toLowerCase().includes(search.toLowerCase()),
   );
+
+  const handlePinDigit = (digit: string) => {
+    const next = pin + digit;
+    setPin(next);
+    if (next.length === APP_PIN.length) {
+      if (next === APP_PIN) {
+        sessionStorage.setItem("auth", "true");
+        setAuthenticated(true);
+      } else {
+        toast.error("PIN incorrecto");
+        setPin("");
+      }
+    }
+  };
+
+  if (!authenticated) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <Card className="w-full max-w-xs">
+          <CardBody className="flex flex-col gap-5 items-center">
+            <h2 className="font-bold text-lg">Ingresar PIN</h2>
+            <div className="flex gap-3 justify-center">
+              {Array.from({ length: APP_PIN.length }).map((_, i) => (
+                <div
+                  key={i}
+                  className={`w-4 h-4 rounded-full border-2 ${
+                    i < pin.length
+                      ? "bg-primary border-primary"
+                      : "border-gray-300"
+                  }`}
+                />
+              ))}
+            </div>
+            <div className="grid grid-cols-3 gap-3 w-full">
+              {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
+                <Button
+                  key={d}
+                  size="lg"
+                  variant="flat"
+                  className="text-xl font-semibold h-14"
+                  onPress={() => handlePinDigit(d)}
+                >
+                  {d}
+                </Button>
+              ))}
+              <div />
+              <Button
+                size="lg"
+                variant="flat"
+                className="text-xl font-semibold h-14"
+                onPress={() => handlePinDigit("0")}
+              >
+                0
+              </Button>
+              <Button
+                size="lg"
+                variant="light"
+                className="text-xl h-14"
+                onPress={() => setPin(pin.slice(0, -1))}
+              >
+                &#9003;
+              </Button>
+            </div>
+          </CardBody>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -123,14 +202,14 @@ export default function App() {
                     <div className="flex gap-1">
                       <Button
                         size="sm"
-                        color="primary"
+                        color="success"
                         variant="flat"
                         onPress={() => {
                           setCurrent(p);
-                          setView("edit");
+                          setView("sell");
                         }}
                       >
-                        Editar
+                        Vender
                       </Button>
                       <Button
                         size="sm"
@@ -169,7 +248,7 @@ export default function App() {
                 className="w-full"
                 onPress={() => setView("scan")}
               >
-                📷 Escanear QR para editar
+                📷 Escanear QR para vender
               </Button>
             </div>
           </>
@@ -180,6 +259,13 @@ export default function App() {
         )}
         {view === "add" && (
           <AddView onSave={addProduct} onBack={() => setView("list")} />
+        )}
+        {view === "sell" && current && (
+          <SellView
+            product={current}
+            onSave={saveEdit}
+            onBack={() => setView("list")}
+          />
         )}
         {view === "edit" && current && (
           <EditView
@@ -230,7 +316,7 @@ function ScanQR({
       try {
         await scannerRef.current.stop();
         await scannerRef.current.clear();
-      } catch (_e) {
+      } catch {
         /* ignore */
       }
       scannerRef.current = null;
@@ -339,41 +425,38 @@ function AddView({
   );
 }
 
-function EditView({
+function SellView({
   product,
   onSave,
   onBack,
 }: {
   product: Product;
-  onSave: (id: number, stock: number, precio: number) => void;
+  onSave: (id: number, updates: Partial<Omit<Product, "id">>) => void;
   onBack: () => void;
 }) {
   const [cantidad, setCantidad] = useState("");
-  const [stock, setStock] = useState(product.stock);
-  const [precio, setPrecio] = useState(String(product.precio));
+  const stock = product.stock;
 
   const qty = Number(cantidad) || 0;
 
   const handleAgregar = () => {
     const newStock = stock + qty;
-    setStock(newStock);
-    setCantidad("");
-    onSave(product.id, newStock, Number(precio));
+    onSave(product.id, { stock: newStock });
     toast.success(`Agregaste ${qty} ${product.name}`);
+    onBack();
   };
 
   const handleDescontar = () => {
     const newStock = stock - qty;
-    setStock(newStock);
-    setCantidad("");
-    onSave(product.id, newStock, Number(precio));
-    toast.success(`Retiraste ${qty} ${product.name}`);
+    onSave(product.id, { stock: newStock });
+    toast.success(`Vendiste ${qty} ${product.name}`);
+    onBack();
   };
 
   return (
     <Card>
       <CardBody>
-        <h2 className="font-bold text-lg mb-3">Editar {product.name}</h2>
+        <h2 className="font-bold text-lg mb-3">Vender {product.name}</h2>
         <div className="flex flex-col gap-4">
           <Chip size="lg" variant="flat" color="primary">
             Stock actual: {stock}
@@ -401,9 +484,48 @@ function EditView({
               isDisabled={qty <= 0 || qty > stock}
               onPress={handleDescontar}
             >
-              - Descontar {qty > 0 && qty}
+              - Vender {qty > 0 && qty}
             </Button>
           </div>
+          <Button variant="light" className="w-full" onPress={onBack}>
+            Volver
+          </Button>
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
+function EditView({
+  product,
+  onSave,
+  onBack,
+}: {
+  product: Product;
+  onSave: (id: number, updates: Partial<Omit<Product, "id">>) => void;
+  onBack: () => void;
+}) {
+  const [name, setName] = useState(product.name);
+  const [stock, setStock] = useState(String(product.stock));
+  const [precio, setPrecio] = useState(String(product.precio));
+
+  return (
+    <Card>
+      <CardBody>
+        <h2 className="font-bold text-lg mb-3">Editar {product.name}</h2>
+        <div className="flex flex-col gap-4">
+          <Input
+            label="Nombre"
+            value={name}
+            onValueChange={setName}
+          />
+          <Input
+            label="Stock"
+            type="number"
+            inputMode="numeric"
+            value={stock}
+            onValueChange={setStock}
+          />
           <Input
             label="Precio"
             type="number"
@@ -417,11 +539,16 @@ function EditView({
             color="primary"
             className="w-full"
             onPress={() => {
-              onSave(product.id, stock, Number(precio));
-              toast.success(`Precio de ${product.name} actualizado`);
+              onSave(product.id, {
+                name,
+                stock: Number(stock),
+                precio: Number(precio),
+              });
+              toast.success(`${product.name} actualizado`);
+              onBack();
             }}
           >
-            Guardar precio
+            Guardar cambios
           </Button>
           <Button variant="light" className="w-full" onPress={onBack}>
             Volver
