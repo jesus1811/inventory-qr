@@ -181,6 +181,24 @@ export default function App() {
               startContent={<span className="text-gray-400 text-sm">🔍</span>}
             />
 
+            <div className="flex flex-col gap-2 my-3">
+              <Button
+                color="success"
+                className="w-full"
+                onPress={() => setView("add")}
+              >
+                + Registrar producto
+              </Button>
+              <Button
+                color="default"
+                variant="bordered"
+                className="w-full"
+                onPress={() => setView("scan")}
+              >
+                📷 Escanear QR
+              </Button>
+            </div>
+
             <div className="space-y-3 mb-4">
               {filtered.map((p) => (
                 <Card
@@ -237,24 +255,6 @@ export default function App() {
                   No se encontraron productos
                 </p>
               )}
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <Button
-                color="success"
-                className="w-full"
-                onPress={() => setView("add")}
-              >
-                + Registrar producto
-              </Button>
-              <Button
-                color="default"
-                variant="bordered"
-                className="w-full"
-                onPress={() => setView("scan")}
-              >
-                📷 Escanear QR
-              </Button>
             </div>
           </>
         )}
