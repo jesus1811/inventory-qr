@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Html5Qrcode } from "html5-qrcode";
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 import {
   Navbar,
   NavbarBrand,
@@ -23,6 +23,39 @@ type Product = {
 };
 
 const APP_PIN = import.meta.env.VITE_APP_PIN || "7654";
+
+const BARCODE_FORMATS = [
+  Html5QrcodeSupportedFormats.EAN_13,
+  Html5QrcodeSupportedFormats.EAN_8,
+  Html5QrcodeSupportedFormats.UPC_A,
+  Html5QrcodeSupportedFormats.UPC_E,
+  Html5QrcodeSupportedFormats.CODE_128,
+  Html5QrcodeSupportedFormats.CODE_39,
+  Html5QrcodeSupportedFormats.CODE_93,
+  Html5QrcodeSupportedFormats.CODABAR,
+  Html5QrcodeSupportedFormats.ITF,
+];
+
+let beepCtx: AudioContext | null = null;
+
+const playBeep = () => {
+  try {
+    beepCtx ??= new AudioContext();
+    if (beepCtx.state === "suspended") beepCtx.resume();
+    const oscillator = beepCtx.createOscillator();
+    const gain = beepCtx.createGain();
+    oscillator.type = "square";
+    oscillator.frequency.value = 1500;
+    gain.gain.setValueAtTime(0.2, beepCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, beepCtx.currentTime + 0.12);
+    oscillator.connect(gain);
+    gain.connect(beepCtx.destination);
+    oscillator.start();
+    oscillator.stop(beepCtx.currentTime + 0.12);
+  } catch {
+    /* ignore */
+  }
+};
 
 export default function App() {
   const [authenticated, setAuthenticated] = useState(
@@ -195,7 +228,7 @@ export default function App() {
                 className="w-full"
                 onPress={() => setView("scan")}
               >
-                📷 Escanear QR
+                📷 Escanear código de barras
               </Button>
             </div>
 
@@ -296,13 +329,20 @@ function ScanQR({
 
   const startScan = async () => {
     try {
-      const scanner = new Html5Qrcode("qr-reader");
+      const scanner = new Html5Qrcode("qr-reader", {
+        formatsToSupport: BARCODE_FORMATS,
+        verbose: false,
+      });
       scannerRef.current = scanner;
 
       await scanner.start(
         { facingMode: "environment" },
-        { fps: 10, qrbox: 250 },
+        {
+          fps: 15,
+          qrbox: { width: 280, height: 120 },
+        },
         (decodedText) => {
+          playBeep();
           stopScan();
           onResult(decodedText);
         },
@@ -338,7 +378,7 @@ function ScanQR({
   return (
     <Card>
       <CardBody>
-        <h2 className="font-bold text-lg mb-3">Escanear QR</h2>
+        <h2 className="font-bold text-lg mb-3">Escanear código de barras</h2>
 
         {!active && (
           <Button color="default" className="w-full mb-3" onPress={startScan}>
@@ -385,7 +425,7 @@ function AddView({
         {qr && (
           <div className="flex flex-col gap-3">
             <Chip size="sm" variant="flat" color="secondary">
-              QR: {qr}
+              Código: {qr}
             </Chip>
             <Input
               label="Nombre"
@@ -421,7 +461,7 @@ function AddView({
               className="w-full"
               onPress={() => setQr(null)}
             >
-              Reescanear QR
+              Reescanear código
             </Button>
           </div>
         )}
