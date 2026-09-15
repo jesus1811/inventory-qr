@@ -36,6 +36,18 @@ const BARCODE_FORMATS = [
   Html5QrcodeSupportedFormats.ITF,
 ];
 
+const NATIVE_BARCODE_FORMATS = [
+  "ean_13",
+  "ean_8",
+  "upc_a",
+  "upc_e",
+  "code_128",
+  "code_39",
+  "code_93",
+  "codabar",
+  "itf",
+];
+
 let beepCtx: AudioContext | null = null;
 
 const playBeep = () => {
@@ -317,6 +329,9 @@ export default function App() {
   );
 }
 
+const supportsNativeDetector =
+  typeof window !== "undefined" && "BarcodeDetector" in window;
+
 function ScanQR({
   onResult,
   onBack,
@@ -324,52 +339,34 @@ function ScanQR({
   onResult: (qr: string) => void;
   onBack: () => void;
 }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const frameHandleRef = useRef<number | null>(null);
   const scannerRef = useRef<Html5Qrcode | null>(null);
+  const stoppedRef = useRef(true);
   const [active, setActive] = useState(false);
 
-  const startScan = async () => {
-    try {
-      const scanner = new Html5Qrcode("qr-reader", {
-        formatsToSupport: BARCODE_FORMATS,
-        experimentalFeatures: {
-          useBarCodeDetectorIfSupported: true,
-        },
-        verbose: false,
-      });
-      scannerRef.current = scanner;
-
-      await scanner.start(
-        { facingMode: "environment" },
-        {
-          fps: 20,
-          qrbox: (viewfinderWidth, viewfinderHeight) => ({
-            width: Math.floor(viewfinderWidth * 0.9),
-            height: Math.floor(viewfinderHeight * 0.5),
-          }),
-          videoConstraints: {
-            facingMode: "environment",
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
-            // @ts-expect-error advanced constraints not in lib.dom types
-            advanced: [{ focusMode: "continuous" }],
-          },
-        },
-        (decodedText) => {
-          playBeep();
-          stopScan();
-          onResult(decodedText);
-        },
-        undefined,
-      );
-
-      setActive(true);
-    } catch (err) {
-      console.error(err);
-      alert("No se pudo acceder a la cámara");
-    }
-  };
-
   const stopScan = async () => {
+    stoppedRef.current = true;
+
+    const video = videoRef.current;
+    if (frameHandleRef.current !== null) {
+      if (video?.cancelVideoFrameCallback) {
+        video.cancelVideoFrameCallback(frameHandleRef.current);
+      } else {
+        cancelAnimationFrame(frameHandleRef.current);
+      }
+      frameHandleRef.current = null;
+    }
+
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    if (video) {
+      video.srcObject = null;
+    }
+
     if (scannerRef.current) {
       try {
         await scannerRef.current.stop();
@@ -379,7 +376,108 @@ function ScanQR({
       }
       scannerRef.current = null;
     }
+
     setActive(false);
+  };
+
+  // Uses the browser/OS's native barcode reader (Shape Detection API)
+  // directly against the live <video> feed. It runs a frame or two behind
+  // the camera's own frame rate and reads anywhere in view, so it behaves
+  // like a real handheld scanner instead of a slow JS-decoded loop.
+  const startNativeScan = async () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: "environment",
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        // @ts-expect-error advanced constraints not in lib.dom types
+        advanced: [{ focusMode: "continuous" }],
+      },
+    });
+    streamRef.current = stream;
+    video.srcObject = stream;
+    await video.play();
+
+    const detector = new window.BarcodeDetector!({
+      formats: NATIVE_BARCODE_FORMATS,
+    });
+
+    stoppedRef.current = false;
+
+    const tick = async () => {
+      if (stoppedRef.current) return;
+      try {
+        const results = await detector.detect(video);
+        if (results.length > 0) {
+          const value = results[0].rawValue;
+          playBeep();
+          await stopScan();
+          onResult(value);
+          return;
+        }
+      } catch {
+        /* transient decode error, keep scanning */
+      }
+      if (stoppedRef.current) return;
+      frameHandleRef.current = video.requestVideoFrameCallback
+        ? video.requestVideoFrameCallback(tick)
+        : requestAnimationFrame(tick);
+    };
+
+    frameHandleRef.current = video.requestVideoFrameCallback
+      ? video.requestVideoFrameCallback(tick)
+      : requestAnimationFrame(tick);
+  };
+
+  // Fallback for browsers without the native BarcodeDetector (e.g. iOS
+  // Safari): JS-based decoding via html5-qrcode.
+  const startFallbackScan = async () => {
+    const scanner = new Html5Qrcode("qr-reader", {
+      formatsToSupport: BARCODE_FORMATS,
+      verbose: false,
+    });
+    scannerRef.current = scanner;
+
+    await scanner.start(
+      { facingMode: "environment" },
+      {
+        fps: 20,
+        qrbox: (viewfinderWidth, viewfinderHeight) => ({
+          width: Math.floor(viewfinderWidth * 0.9),
+          height: Math.floor(viewfinderHeight * 0.5),
+        }),
+        videoConstraints: {
+          facingMode: "environment",
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          // @ts-expect-error advanced constraints not in lib.dom types
+          advanced: [{ focusMode: "continuous" }],
+        },
+      },
+      (decodedText) => {
+        playBeep();
+        stopScan();
+        onResult(decodedText);
+      },
+      undefined,
+    );
+  };
+
+  const startScan = async () => {
+    try {
+      if (supportsNativeDetector) {
+        await startNativeScan();
+      } else {
+        await startFallbackScan();
+      }
+      setActive(true);
+    } catch (err) {
+      console.error(err);
+      alert("No se pudo acceder a la cámara");
+    }
   };
 
   useEffect(() => {
@@ -399,7 +497,25 @@ function ScanQR({
           </Button>
         )}
 
-        <div id="qr-reader" className="w-full" />
+        {supportsNativeDetector ? (
+          <div
+            className="relative w-full overflow-hidden rounded-lg bg-black"
+            style={{ aspectRatio: "4 / 3" }}
+          >
+            <video
+              ref={videoRef}
+              className="h-full w-full object-cover"
+              muted
+              playsInline
+              autoPlay
+            />
+            {active && (
+              <div className="pointer-events-none absolute inset-x-[5%] top-1/2 h-1/2 -translate-y-1/2 rounded-md border-2 border-white/80" />
+            )}
+          </div>
+        ) : (
+          <div id="qr-reader" className="w-full" />
+        )}
 
         <Button
           variant="light"
