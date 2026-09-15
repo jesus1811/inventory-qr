@@ -345,6 +345,9 @@ function ScanQR({
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const stoppedRef = useRef(true);
   const [active, setActive] = useState(false);
+  const [engine, setEngine] = useState<"nativo" | "compatibilidad" | null>(
+    null,
+  );
 
   const stopScan = async () => {
     stoppedRef.current = true;
@@ -378,6 +381,7 @@ function ScanQR({
     }
 
     setActive(false);
+    setEngine(null);
   };
 
   // Uses the browser/OS's native barcode reader (Shape Detection API)
@@ -393,17 +397,41 @@ function ScanQR({
         facingMode: "environment",
         width: { ideal: 1280 },
         height: { ideal: 720 },
-        // @ts-expect-error advanced constraints not in lib.dom types
-        advanced: [{ focusMode: "continuous" }],
       },
     });
     streamRef.current = stream;
     video.srcObject = stream;
     await video.play();
 
-    const detector = new window.BarcodeDetector!({
-      formats: NATIVE_BARCODE_FORMATS,
-    });
+    // Applied after the track exists (rather than as a getUserMedia
+    // constraint) since that's the form most devices actually honor;
+    // without it many phones lock focus once instead of refocusing as you
+    // move the barcode into range, which is what forces "hold it still and
+    // close" instead of a quick pass-by read.
+    const [track] = stream.getVideoTracks();
+    try {
+      await track.applyConstraints({
+        // @ts-expect-error advanced constraints not in lib.dom types
+        advanced: [{ focusMode: "continuous" }],
+      });
+    } catch {
+      /* device doesn't support programmatic focus control */
+    }
+
+    // Not every device supports every format we ask for; the constructor
+    // throws if it doesn't, so filter down to what's actually supported.
+    let formats = NATIVE_BARCODE_FORMATS;
+    try {
+      const supported = await window.BarcodeDetector!.getSupportedFormats();
+      formats = NATIVE_BARCODE_FORMATS.filter((f) => supported.includes(f));
+    } catch {
+      /* getSupportedFormats unavailable, try with the full list */
+    }
+    if (formats.length === 0) {
+      throw new Error("No supported barcode formats on this device");
+    }
+
+    const detector = new window.BarcodeDetector!({ formats });
 
     stoppedRef.current = false;
 
@@ -441,42 +469,73 @@ function ScanQR({
     });
     scannerRef.current = scanner;
 
+    const scanConfig = {
+      fps: 20,
+      qrbox: (viewfinderWidth: number, viewfinderHeight: number) => ({
+        width: Math.floor(viewfinderWidth * 0.9),
+        height: Math.floor(viewfinderHeight * 0.5),
+      }),
+    };
+    const onDecoded = (decodedText: string) => {
+      playBeep();
+      stopScan();
+      onResult(decodedText);
+    };
+
     await scanner.start(
       { facingMode: "environment" },
       {
-        fps: 20,
-        qrbox: (viewfinderWidth, viewfinderHeight) => ({
-          width: Math.floor(viewfinderWidth * 0.9),
-          height: Math.floor(viewfinderHeight * 0.5),
-        }),
+        ...scanConfig,
         videoConstraints: {
           facingMode: "environment",
           width: { ideal: 1280 },
           height: { ideal: 720 },
-          // @ts-expect-error advanced constraints not in lib.dom types
-          advanced: [{ focusMode: "continuous" }],
         },
       },
-      (decodedText) => {
-        playBeep();
-        stopScan();
-        onResult(decodedText);
-      },
+      onDecoded,
       undefined,
     );
+
+    // Best-effort continuous autofocus, applied post-start (see comment in
+    // startNativeScan for why).
+    try {
+      await scanner.applyVideoConstraints({
+        // @ts-expect-error advanced constraints not in lib.dom types
+        advanced: [{ focusMode: "continuous" }],
+      });
+    } catch {
+      /* device doesn't support programmatic focus control */
+    }
   };
 
   const startScan = async () => {
     try {
       if (supportsNativeDetector) {
-        await startNativeScan();
+        try {
+          await startNativeScan();
+          setEngine("nativo");
+        } catch (err) {
+          console.error("native scan failed, falling back", err);
+          await stopScan();
+          await startFallbackScan();
+          setEngine("compatibilidad");
+        }
       } else {
         await startFallbackScan();
+        setEngine("compatibilidad");
       }
       setActive(true);
     } catch (err) {
       console.error(err);
-      alert("No se pudo acceder a la cámara");
+      await stopScan();
+      const name = err instanceof Error ? err.name : "";
+      if (name === "NotAllowedError") {
+        alert("Debes permitir el acceso a la cámara para escanear.");
+      } else if (name === "NotFoundError") {
+        alert("No se encontró ninguna cámara en este dispositivo.");
+      } else {
+        alert("No se pudo acceder a la cámara");
+      }
     }
   };
 
@@ -489,7 +548,18 @@ function ScanQR({
   return (
     <Card>
       <CardBody>
-        <h2 className="font-bold text-lg mb-3">Escanear código de barras</h2>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h2 className="font-bold text-lg">Escanear código de barras</h2>
+          {engine && (
+            <Chip
+              size="sm"
+              color={engine === "nativo" ? "success" : "warning"}
+              variant="flat"
+            >
+              {engine === "nativo" ? "Motor nativo" : "Modo compatibilidad"}
+            </Chip>
+          )}
+        </div>
 
         {!active && (
           <Button color="default" className="w-full mb-3" onPress={startScan}>
