@@ -331,6 +331,9 @@ function ScanQR({
     try {
       const scanner = new Html5Qrcode("qr-reader", {
         formatsToSupport: BARCODE_FORMATS,
+        experimentalFeatures: {
+          useBarCodeDetectorIfSupported: true,
+        },
         verbose: false,
       });
       scannerRef.current = scanner;
@@ -338,8 +341,18 @@ function ScanQR({
       await scanner.start(
         { facingMode: "environment" },
         {
-          fps: 15,
-          qrbox: { width: 280, height: 120 },
+          fps: 20,
+          qrbox: (viewfinderWidth, viewfinderHeight) => ({
+            width: Math.floor(viewfinderWidth * 0.9),
+            height: Math.floor(viewfinderHeight * 0.5),
+          }),
+          videoConstraints: {
+            facingMode: "environment",
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            // @ts-expect-error advanced constraints not in lib.dom types
+            advanced: [{ focusMode: "continuous" }],
+          },
         },
         (decodedText) => {
           playBeep();
