@@ -332,6 +332,47 @@ export default function App() {
 const supportsNativeDetector =
   typeof window !== "undefined" && "BarcodeDetector" in window;
 
+// A read is accepted only after the same value is decoded on this many
+// consecutive frames; the overlay tracks the code in the meantime.
+const CONFIRM_FRAMES = 2;
+// Drop an in-progress candidate if it isn't seen again within this window.
+const CANDIDATE_TIMEOUT_MS = 300;
+// How long the green "locked" marker stays visible before leaving the view.
+const LOCK_DISPLAY_MS = 150;
+// Mild optical/digital zoom so codes read from farther away, outside the
+// lens's minimum focus distance (what native scanner apps do by default).
+const SCAN_ZOOM = 1.5;
+
+// Maps a detected barcode's corners from video-pixel space to the displayed
+// element's CSS-pixel space, accounting for the object-cover crop.
+function toOverlayPoints(
+  video: HTMLVideoElement,
+  barcode: DetectedBarcode,
+): string {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  const cw = video.clientWidth;
+  const ch = video.clientHeight;
+  const scale = Math.max(cw / vw, ch / vh);
+  const offsetX = (cw - vw * scale) / 2;
+  const offsetY = (ch - vh * scale) / 2;
+
+  const box = barcode.boundingBox;
+  const corners =
+    barcode.cornerPoints.length === 4
+      ? barcode.cornerPoints
+      : [
+          { x: box.left, y: box.top },
+          { x: box.right, y: box.top },
+          { x: box.right, y: box.bottom },
+          { x: box.left, y: box.bottom },
+        ];
+
+  return corners
+    .map((p) => `${p.x * scale + offsetX},${p.y * scale + offsetY}`)
+    .join(" ");
+}
+
 function ScanQR({
   onResult,
   onBack,
@@ -343,6 +384,7 @@ function ScanQR({
   const streamRef = useRef<MediaStream | null>(null);
   const frameHandleRef = useRef<number | null>(null);
   const scannerRef = useRef<Html5Qrcode | null>(null);
+  const markerRef = useRef<SVGPolygonElement | null>(null);
   const stoppedRef = useRef(true);
   const [active, setActive] = useState(false);
   const [engine, setEngine] = useState<"nativo" | "compatibilidad" | null>(
@@ -418,6 +460,22 @@ function ScanQR({
       /* device doesn't support programmatic focus control */
     }
 
+    // Separate call so an unsupported zoom can't cancel the focus setting.
+    const zoomRange = (
+      track.getCapabilities?.() as { zoom?: { min: number; max: number } }
+    )?.zoom;
+    if (zoomRange) {
+      const zoom = Math.min(Math.max(SCAN_ZOOM, zoomRange.min), zoomRange.max);
+      try {
+        await track.applyConstraints({
+          // @ts-expect-error zoom not in lib.dom types
+          advanced: [{ zoom }],
+        });
+      } catch {
+        /* zoom reported but not applicable */
+      }
+    }
+
     // Not every device supports every format we ask for; the constructor
     // throws if it doesn't, so filter down to what's actually supported.
     let formats = NATIVE_BARCODE_FORMATS;
@@ -435,16 +493,59 @@ function ScanQR({
 
     stoppedRef.current = false;
 
+    let candidate: string | null = null;
+    let candidateHits = 0;
+    let candidateSeenAt = 0;
+
+    const hideMarker = () => {
+      markerRef.current?.setAttribute("visibility", "hidden");
+    };
+    const showMarker = (barcode: DetectedBarcode, locked: boolean) => {
+      const marker = markerRef.current;
+      if (!marker) return;
+      marker.setAttribute("points", toOverlayPoints(video, barcode));
+      marker.setAttribute("stroke", locked ? "#22c55e" : "#facc15");
+      marker.setAttribute(
+        "fill",
+        locked ? "rgba(34, 197, 94, 0.2)" : "rgba(250, 204, 21, 0.15)",
+      );
+      marker.setAttribute("visibility", "visible");
+    };
+
     const tick = async () => {
       if (stoppedRef.current) return;
       try {
         const results = await detector.detect(video);
+        if (stoppedRef.current) return;
+        const now = performance.now();
+
         if (results.length > 0) {
-          const value = results[0].rawValue;
-          playBeep();
-          await stopScan();
-          onResult(value);
-          return;
+          const barcode = results[0];
+          if (
+            barcode.rawValue === candidate &&
+            now - candidateSeenAt <= CANDIDATE_TIMEOUT_MS
+          ) {
+            candidateHits++;
+          } else {
+            candidate = barcode.rawValue;
+            candidateHits = 1;
+          }
+          candidateSeenAt = now;
+
+          const locked = candidateHits >= CONFIRM_FRAMES;
+          showMarker(barcode, locked);
+          if (locked) {
+            playBeep();
+            stoppedRef.current = true;
+            await new Promise((r) => setTimeout(r, LOCK_DISPLAY_MS));
+            await stopScan();
+            onResult(barcode.rawValue);
+            return;
+          }
+        } else if (now - candidateSeenAt > CANDIDATE_TIMEOUT_MS) {
+          candidate = null;
+          candidateHits = 0;
+          hideMarker();
         }
       } catch {
         /* transient decode error, keep scanning */
@@ -580,7 +681,18 @@ function ScanQR({
               autoPlay
             />
             {active && (
-              <div className="pointer-events-none absolute inset-x-[5%] top-1/2 h-1/2 -translate-y-1/2 rounded-md border-2 border-white/80" />
+              <>
+                <div className="pointer-events-none absolute inset-x-[5%] top-1/2 h-1/2 -translate-y-1/2 rounded-md border-2 border-white/40" />
+                <svg className="pointer-events-none absolute inset-0 h-full w-full">
+                  <polygon
+                    ref={markerRef}
+                    visibility="hidden"
+                    fill="rgba(250, 204, 21, 0.15)"
+                    strokeWidth={3}
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </>
             )}
           </div>
         ) : (
