@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
+import type { BarcodeFormat } from "barcode-detector/ponyfill";
 import {
   Navbar,
   NavbarBrand,
@@ -24,19 +24,7 @@ type Product = {
 
 const APP_PIN = import.meta.env.VITE_APP_PIN || "7654";
 
-const BARCODE_FORMATS = [
-  Html5QrcodeSupportedFormats.EAN_13,
-  Html5QrcodeSupportedFormats.EAN_8,
-  Html5QrcodeSupportedFormats.UPC_A,
-  Html5QrcodeSupportedFormats.UPC_E,
-  Html5QrcodeSupportedFormats.CODE_128,
-  Html5QrcodeSupportedFormats.CODE_39,
-  Html5QrcodeSupportedFormats.CODE_93,
-  Html5QrcodeSupportedFormats.CODABAR,
-  Html5QrcodeSupportedFormats.ITF,
-];
-
-const NATIVE_BARCODE_FORMATS = [
+const BARCODE_FORMATS: BarcodeFormat[] = [
   "ean_13",
   "ean_8",
   "upc_a",
@@ -332,6 +320,52 @@ export default function App() {
 const supportsNativeDetector =
   typeof window !== "undefined" && "BarcodeDetector" in window;
 
+type ScanEngine = "nativo" | "wasm";
+
+// Prefers the browser/OS's native reader (Shape Detection API, e.g. Android
+// Chrome). Where that's missing or supports none of our formats (iOS Safari,
+// Firefox, desktop), loads a ZXing WebAssembly build with the same API on
+// demand, so native devices never download it. The .wasm is served from our
+// own bundle instead of the library's default CDN.
+async function createBarcodeDetector(): Promise<{
+  detector: BarcodeDetector;
+  engine: ScanEngine;
+}> {
+  if (supportsNativeDetector) {
+    try {
+      const supported = await window.BarcodeDetector!.getSupportedFormats();
+      const formats = BARCODE_FORMATS.filter((f) => supported.includes(f));
+      if (formats.length > 0) {
+        return {
+          detector: new window.BarcodeDetector!({ formats }),
+          engine: "nativo",
+        };
+      }
+    } catch {
+      /* fall through to ZXing */
+    }
+  }
+
+  const [{ BarcodeDetector: ZXingBarcodeDetector, prepareZXingModule }, wasm] =
+    await Promise.all([
+      import("barcode-detector/ponyfill"),
+      import("zxing-wasm/reader/zxing_reader.wasm?url"),
+    ]);
+  await prepareZXingModule({
+    overrides: {
+      locateFile: (path: string, prefix: string) =>
+        path.endsWith(".wasm") ? wasm.default : prefix + path,
+    },
+    fireImmediately: true,
+  });
+  return {
+    detector: new ZXingBarcodeDetector({
+      formats: BARCODE_FORMATS,
+    }) as unknown as BarcodeDetector,
+    engine: "wasm",
+  };
+}
+
 // A read is accepted only after the same value is decoded on this many
 // consecutive frames; the overlay tracks the code in the meantime.
 const CONFIRM_FRAMES = 2;
@@ -383,13 +417,11 @@ function ScanQR({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const frameHandleRef = useRef<number | null>(null);
-  const scannerRef = useRef<Html5Qrcode | null>(null);
   const markerRef = useRef<SVGPolygonElement | null>(null);
   const stoppedRef = useRef(true);
   const [active, setActive] = useState(false);
-  const [engine, setEngine] = useState<"nativo" | "compatibilidad" | null>(
-    null,
-  );
+  const [starting, setStarting] = useState(false);
+  const [engine, setEngine] = useState<ScanEngine | null>(null);
 
   const stopScan = async () => {
     stoppedRef.current = true;
@@ -412,27 +444,16 @@ function ScanQR({
       video.srcObject = null;
     }
 
-    if (scannerRef.current) {
-      try {
-        await scannerRef.current.stop();
-        await scannerRef.current.clear();
-      } catch {
-        /* ignore */
-      }
-      scannerRef.current = null;
-    }
-
     setActive(false);
     setEngine(null);
   };
 
-  // Uses the browser/OS's native barcode reader (Shape Detection API)
-  // directly against the live <video> feed. It runs a frame or two behind
-  // the camera's own frame rate and reads anywhere in view, so it behaves
-  // like a real handheld scanner instead of a slow JS-decoded loop.
-  const startNativeScan = async () => {
+  // Runs the detector directly against the live <video> feed, once per
+  // camera frame, reading anywhere in view so it behaves like a real
+  // handheld scanner. Resolves to null if the scan was cancelled meanwhile.
+  const startCameraScan = async (): Promise<ScanEngine | null> => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video) return null;
 
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
@@ -476,20 +497,9 @@ function ScanQR({
       }
     }
 
-    // Not every device supports every format we ask for; the constructor
-    // throws if it doesn't, so filter down to what's actually supported.
-    let formats = NATIVE_BARCODE_FORMATS;
-    try {
-      const supported = await window.BarcodeDetector!.getSupportedFormats();
-      formats = NATIVE_BARCODE_FORMATS.filter((f) => supported.includes(f));
-    } catch {
-      /* getSupportedFormats unavailable, try with the full list */
-    }
-    if (formats.length === 0) {
-      throw new Error("No supported barcode formats on this device");
-    }
-
-    const detector = new window.BarcodeDetector!({ formats });
+    const { detector, engine } = await createBarcodeDetector();
+    // "Volver" or unmount while the detector was loading.
+    if (streamRef.current !== stream) return null;
 
     stoppedRef.current = false;
 
@@ -559,73 +569,17 @@ function ScanQR({
     frameHandleRef.current = video.requestVideoFrameCallback
       ? video.requestVideoFrameCallback(tick)
       : requestAnimationFrame(tick);
-  };
-
-  // Fallback for browsers without the native BarcodeDetector (e.g. iOS
-  // Safari): JS-based decoding via html5-qrcode.
-  const startFallbackScan = async () => {
-    const scanner = new Html5Qrcode("qr-reader", {
-      formatsToSupport: BARCODE_FORMATS,
-      verbose: false,
-    });
-    scannerRef.current = scanner;
-
-    const scanConfig = {
-      fps: 20,
-      qrbox: (viewfinderWidth: number, viewfinderHeight: number) => ({
-        width: Math.floor(viewfinderWidth * 0.9),
-        height: Math.floor(viewfinderHeight * 0.5),
-      }),
-    };
-    const onDecoded = (decodedText: string) => {
-      playBeep();
-      stopScan();
-      onResult(decodedText);
-    };
-
-    await scanner.start(
-      { facingMode: "environment" },
-      {
-        ...scanConfig,
-        videoConstraints: {
-          facingMode: "environment",
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-      },
-      onDecoded,
-      undefined,
-    );
-
-    // Best-effort continuous autofocus, applied post-start (see comment in
-    // startNativeScan for why).
-    try {
-      await scanner.applyVideoConstraints({
-        // @ts-expect-error advanced constraints not in lib.dom types
-        advanced: [{ focusMode: "continuous" }],
-      });
-    } catch {
-      /* device doesn't support programmatic focus control */
-    }
+    return engine;
   };
 
   const startScan = async () => {
+    setStarting(true);
     try {
-      if (supportsNativeDetector) {
-        try {
-          await startNativeScan();
-          setEngine("nativo");
-        } catch (err) {
-          console.error("native scan failed, falling back", err);
-          await stopScan();
-          await startFallbackScan();
-          setEngine("compatibilidad");
-        }
-      } else {
-        await startFallbackScan();
-        setEngine("compatibilidad");
+      const started = await startCameraScan();
+      if (started) {
+        setEngine(started);
+        setActive(true);
       }
-      setActive(true);
     } catch (err) {
       console.error(err);
       await stopScan();
@@ -635,8 +589,10 @@ function ScanQR({
       } else if (name === "NotFoundError") {
         alert("No se encontró ninguna cámara en este dispositivo.");
       } else {
-        alert("No se pudo acceder a la cámara");
+        alert("No se pudo iniciar el escáner");
       }
+    } finally {
+      setStarting(false);
     }
   };
 
@@ -654,50 +610,51 @@ function ScanQR({
           {engine && (
             <Chip
               size="sm"
-              color={engine === "nativo" ? "success" : "warning"}
+              color={engine === "nativo" ? "success" : "primary"}
               variant="flat"
             >
-              {engine === "nativo" ? "Motor nativo" : "Modo compatibilidad"}
+              {engine === "nativo" ? "Motor nativo" : "Motor WebAssembly"}
             </Chip>
           )}
         </div>
 
         {!active && (
-          <Button color="default" className="w-full mb-3" onPress={startScan}>
+          <Button
+            color="default"
+            className="w-full mb-3"
+            isLoading={starting}
+            onPress={startScan}
+          >
             Activar cámara
           </Button>
         )}
 
-        {supportsNativeDetector ? (
-          <div
-            className="relative w-full overflow-hidden rounded-lg bg-black"
-            style={{ aspectRatio: "4 / 3" }}
-          >
-            <video
-              ref={videoRef}
-              className="h-full w-full object-cover"
-              muted
-              playsInline
-              autoPlay
-            />
-            {active && (
-              <>
-                <div className="pointer-events-none absolute inset-x-[5%] top-1/2 h-1/2 -translate-y-1/2 rounded-md border-2 border-white/40" />
-                <svg className="pointer-events-none absolute inset-0 h-full w-full">
-                  <polygon
-                    ref={markerRef}
-                    visibility="hidden"
-                    fill="rgba(250, 204, 21, 0.15)"
-                    strokeWidth={3}
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </>
-            )}
-          </div>
-        ) : (
-          <div id="qr-reader" className="w-full" />
-        )}
+        <div
+          className="relative w-full overflow-hidden rounded-lg bg-black"
+          style={{ aspectRatio: "4 / 3" }}
+        >
+          <video
+            ref={videoRef}
+            className="h-full w-full object-cover"
+            muted
+            playsInline
+            autoPlay
+          />
+          {active && (
+            <>
+              <div className="pointer-events-none absolute inset-x-[5%] top-1/2 h-1/2 -translate-y-1/2 rounded-md border-2 border-white/40" />
+              <svg className="pointer-events-none absolute inset-0 h-full w-full">
+                <polygon
+                  ref={markerRef}
+                  visibility="hidden"
+                  fill="rgba(250, 204, 21, 0.15)"
+                  strokeWidth={3}
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </>
+          )}
+        </div>
 
         <Button
           variant="light"
